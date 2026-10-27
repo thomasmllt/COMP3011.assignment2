@@ -73,6 +73,14 @@ public class CommandLineController {
         return List.copyOf(frameProcessorOptions);
     }
 
+    public List<FrameProcessor> createFrameProcessors() {
+        List<FrameProcessor> processors = new ArrayList<>();
+        for (String option : frameProcessorOptions) {
+            processors.add(createFrameProcessor(option));
+        }
+        return processors;
+    }
+
     public boolean shouldLaunchApplication() {
         return errorMessage == null && videoFile != null;
     }
@@ -161,6 +169,23 @@ public class CommandLineController {
         for (int index = 1; index < arg.length(); index++) {
             frameProcessorOptions.add(String.valueOf(arg.charAt(index)));
         }
+    }
+
+    private FrameProcessor createFrameProcessor(String option) {
+        return switch (option) {
+            case "n" -> new FrameNumberer();
+            case "s" -> new FrameScratcher();
+            case "f" -> new FrameFlickerer();
+            case "w" -> new FrameBlackAndWhiter();
+            case "y" -> new FrameYellower();
+            case "v" -> new FrameVignetter();
+            case "d" -> new FrameDuster();
+            case "j" -> new FrameJitterer();
+            case "m" -> new FrameMottler();
+            case "b" -> new FrameBleeder();
+            case "p" -> new FramePepperer();
+            default -> throw new IllegalArgumentException("Unknown frame processor: " + option);
+        };
     }
 
     private void printHelp() {
