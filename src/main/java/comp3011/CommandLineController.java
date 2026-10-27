@@ -4,7 +4,7 @@
  * 
  * Authors:
  *   1. Simon Ratcliffe, in collaboration with GPT-5.6 Terra
- *   2. <student name and student number insert here upon modification>
+ *   2. Thomas Mellouet a3227265
  *
  * Copyright 2026 Simon Ratcliffe
  */
@@ -32,6 +32,7 @@ public class CommandLineController {
     private Integer displayId;
     private File videoFile;
     private String errorMessage;
+    private final List<String> frameProcessorOptions = new ArrayList<>();
 
     public CommandLineController(String[] args) {
         this.args = args.clone();
@@ -68,6 +69,10 @@ public class CommandLineController {
         return maximiseRequested;
     }
 
+    public List<String> getFrameProcessorOptions() {
+        return List.copyOf(frameProcessorOptions);
+    }
+
     public boolean shouldLaunchApplication() {
         return errorMessage == null && videoFile != null;
     }
@@ -85,6 +90,30 @@ public class CommandLineController {
                 setDisplayId(1);
             } else if ("-2".equals(arg) || "--monitor-2".equals(arg)) {
                 setDisplayId(2);
+            } else if ("-n".equals(arg) || "--number-frames".equals(arg)) {
+                frameProcessorOptions.add("n");
+            } else if ("-s".equals(arg) || "--scratch-frames".equals(arg)) {
+                frameProcessorOptions.add("s");
+            } else if ("-f".equals(arg) || "--flicker-frames".equals(arg)) {
+                frameProcessorOptions.add("f");
+            } else if ("-w".equals(arg) || "--black-and-white".equals(arg)) {
+                frameProcessorOptions.add("w");
+            } else if ("-y".equals(arg) || "--yellow-frames".equals(arg)) {
+                frameProcessorOptions.add("y");
+            } else if ("-v".equals(arg) || "--vignette-frames".equals(arg)) {
+                frameProcessorOptions.add("v");
+            } else if ("-d".equals(arg) || "--dust-frames".equals(arg)) {
+                frameProcessorOptions.add("d");
+            } else if ("-j".equals(arg) || "--jitter-frames".equals(arg)) {
+                frameProcessorOptions.add("j");
+            } else if ("-m".equals(arg) || "--mottle-frames".equals(arg)) {
+                frameProcessorOptions.add("m");
+            } else if ("-b".equals(arg) || "--bleed-frames".equals(arg)) {
+                frameProcessorOptions.add("b");
+            } else if ("-p".equals(arg) || "--pepper-frames".equals(arg)) {
+                frameProcessorOptions.add("p");
+            } else if (isStackedFrameProcessorOption(arg)) {
+                addStackedFrameProcessorOptions(arg);
             } else if (arg.startsWith("-")) {
                 errorMessage = "Unknown option: " + arg;
             } else {
@@ -115,6 +144,25 @@ public class CommandLineController {
         this.displayId = displayId;
     }
 
+    private boolean isStackedFrameProcessorOption(String arg) {
+        if (!arg.startsWith("-") || arg.startsWith("--") || arg.length() < 3) {
+            return false;
+        }
+
+        for (int index = 1; index < arg.length(); index++) {
+            if ("nsfwyvdjmbp".indexOf(arg.charAt(index)) < 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void addStackedFrameProcessorOptions(String arg) {
+        for (int index = 1; index < arg.length(); index++) {
+            frameProcessorOptions.add(String.valueOf(arg.charAt(index)));
+        }
+    }
+
     private void printHelp() {
         System.out.println("Usage: VideoPlayer [options] [video-file]");
         System.out.println();
@@ -124,5 +172,18 @@ public class CommandLineController {
         System.out.println("  -x, --maximise     Open the player maximised");
         System.out.println("  -1, --monitor-1    Open the player on display 1");
         System.out.println("  -2, --monitor-2    Open the player on display 2");
+        System.out.println();
+        System.out.println("Frame processors:");
+        System.out.println("  -n, --number-frames       Render the frame number onto each frame");
+        System.out.println("  -s, --scratch-frames      Render vertical film scratches");
+        System.out.println("  -f, --flicker-frames      Randomly dim frames");
+        System.out.println("  -w, --black-and-white     Convert frames to black and white");
+        System.out.println("  -y, --yellow-frames       Apply a warmer colour temperature");
+        System.out.println("  -v, --vignette-frames     Darken the frame edges");
+        System.out.println("  -d, --dust-frames         Render dust and hair marks");
+        System.out.println("  -j, --jitter-frames       Randomly displace frames by a few pixels");
+        System.out.println("  -m, --mottle-frames       Add cloudy emulsion mottling");
+        System.out.println("  -b, --bleed-frames        Bleed light into frames");
+        System.out.println("  -p, --pepper-frames       Pepper frames with dark spots/blotches");
     }
 }
