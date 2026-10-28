@@ -395,9 +395,10 @@ public class VideoPlayerModel {
                 }
             }
 
-            int frameNumber = grabber.getFrameNumber();
             InfoFrame info = new InfoFrame(frameNumber, timestampUs);
-            processingPipeline.submit(frame, info);
+            // FFmpegFrameGrabber may reuse the Frame's image buffers on the
+            // next grab, so workers must receive an independent snapshot.
+            processingPipeline.submit(frame.clone(), info);
             submittedFrameCount++;
 
             if (submittedFrameCount >= 2) {
