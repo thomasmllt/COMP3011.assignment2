@@ -203,22 +203,7 @@ public class VideoPlayerModel {
         long logicalTimestampUs = clampSeekTimestamp(timestampUs);
         long grabTimestampUs = displayableSeekTimestamp(logicalTimestampUs);
 
-        if (!playbackOpen) {
-            startPlayback(grabTimestampUs, pauseRequested, logicalTimestampUs);
-            return;
-        }
-
-        try {
-            synchronized (playbackResourceLock) {
-                grabber.setTimestamp(grabTimestampUs);
-            }
-            resetPlaybackClock(logicalTimestampUs);
-            flushAudioOutput();
-            prepareNextFrame();
-            notifyPlaybackStateChanged();
-        } catch (Exception e) {
-            handlePlaybackError(e);
-        }
+        startPlayback(grabTimestampUs, pauseRequested, logicalTimestampUs);
     }
 
     private void startPlayback(long startTimestampUs, boolean initiallyPaused, long initialRelativeSeekBaseUs) {
