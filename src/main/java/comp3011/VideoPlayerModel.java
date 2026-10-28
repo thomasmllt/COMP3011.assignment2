@@ -15,6 +15,8 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
@@ -50,6 +52,8 @@ public class VideoPlayerModel {
     private final Consumer<String> statusChangedHandler;
     private final BiConsumer<Boolean, Boolean> playbackStateChangedHandler;
     private final Consumer<Boolean> audioOutputStateChangedHandler;
+    private final ExecutorService preparationExecutor = Executors.newSingleThreadExecutor(
+            runnable -> Thread.ofPlatform().name("frame-preparation").unstarted(runnable));
 
     // This is the critical wiring that allows the framework (JavaFX) to call
     // into our model logic every time it goes around its event loop. Every GUI
@@ -70,8 +74,10 @@ public class VideoPlayerModel {
     private FFmpegFrameGrabber grabber; // This is the 3rd party video media decoder. It deals in JavaCV Frame objects.
     private JavaFXFrameConverter converter; // Takes Frame objects to JavaFX Image objects, which can be put on screen.
     private AudioPlayer audioPlayer; // This is ours. It has some real time buffering smarts.
-    private PreparedFrame preparedFrame; // Ours, but is just an Image with some meta-data added.
+    private volatile PreparedFrame preparedFrame; // Ours, but is just an Image with some meta-data added.
     private boolean prepareNextFrameQueued; // True only when the event loop needs to call our prepareNextFrame method.
+    private boolean framePreparationInProgress;
+    private FrameProcessingPipeline processingPipeline;
     private boolean playbackOpen; // True when playback is happening.
     private boolean pauseRequested;
     private boolean audioOutputEnabled;
@@ -172,6 +178,7 @@ public class VideoPlayerModel {
 
     public void shutdown() {
         closePlaybackResources();
+        preparationExecutor.shutdownNow();
     }
 
     private void seekRelative(long offsetUs) {
@@ -279,15 +286,36 @@ public class VideoPlayerModel {
     }
 
     private void prepareNextFrame() {
-        if (!playbackOpen || preparedFrame != null) {
+        if (!playbackOpen || preparedFrame != null || framePreparationInProgress) {
             return;
         }
 
-        try {
-            preparedFrame = readNextVideoFrame();
-        } catch (Exception e) {
-            handlePlaybackError(e);
-        }
+        framePreparationInProgress = true;
+        preparationExecutor.submit(() -> {
+            PreparedFrame nextFrame = null;
+            Exception error = null;
+            try {
+                nextFrame = readNextVideoFrame();
+            } catch (Exception exception) {
+                error = exception;
+            }
+
+            PreparedFrame completedFrame = nextFrame;
+            Exception preparationError = error;
+            Platform.runLater(() -> {
+                framePreparationInProgress = false;
+                if (!playbackOpen) {
+                    return;
+                }
+                if (preparationError != null) {
+                    handlePlaybackError(preparationError);
+                } else if (completedFrame == null) {
+                    finishPlayback();
+                } else {
+                    preparedFrame = completedFrame;
+                }
+            });
+        });
     }
 
     private PreparedFrame readNextVideoFrame() throws Exception {
@@ -308,7 +336,9 @@ public class VideoPlayerModel {
             }
 
             if (!frameProcessorsInitialised) {
-                initialiseFrameProcessors(new InfoVideo(
+                processingPipeline = new FrameProcessingPipeline(
+                        frameProcessors,
+                        new InfoVideo(
                         mediaName(videoFile),
                         totalVideoFrames,
                         frame.imageWidth,
@@ -319,7 +349,8 @@ public class VideoPlayerModel {
                         frameRate,
                         intFrameRate,
                         videoFrameDurationUs,
-                        grabber.getPixelFormat()));
+                        grabber.getPixelFormat()),
+                        2);
                 frameProcessorsInitialised = true;
             }
 
@@ -333,9 +364,13 @@ public class VideoPlayerModel {
 
             int frameNumber = grabber.getFrameNumber();
             InfoFrame info = new InfoFrame(frameNumber, timestampUs);
-            processFrame(frame, info);
+            processingPipeline.submit(frame, info);
+            FrameProcessingPipeline.ProcessedFrame processedFrame = processingPipeline.take();
+            if (!processedFrame.succeeded()) {
+                throw processedFrame.error();
+            }
 
-            Image image = converter.convert(frame);
+            Image image = converter.convert(processedFrame.frame());
             long relativeTimestampUs = Math.max(0, timestampUs - firstTimestampUs);
             long logicalTimestampUs = logicalPlaybackBaseUs + relativeTimestampUs;
             long targetTimeNs = playbackStartNs + relativeTimestampUs * 1_000L;
@@ -485,6 +520,12 @@ public class VideoPlayerModel {
         pauseStartedNs = 0;
         audioAvailable = false;
         frameProcessorsInitialised = false;
+        framePreparationInProgress = false;
+
+        if (processingPipeline != null) {
+            processingPipeline.close();
+            processingPipeline = null;
+        }
 
         if (audioPlayer != null) {
             audioPlayer.close();
@@ -541,18 +582,6 @@ public class VideoPlayerModel {
         }
 
         return Math.max(0, durationUs - frameDurationUs);
-    }
-
-    private void processFrame(Frame frame, InfoFrame info) throws Exception {
-        for (FrameProcessor processor : frameProcessors) {
-            processor.process(frame, info);
-        }
-    }
-
-    private void initialiseFrameProcessors(InfoVideo videoInfo) throws Exception {
-        for (FrameProcessor processor : frameProcessors) {
-            processor.initialise(videoInfo);
-        }
     }
 
     private Frame grabFrame() throws Exception {
