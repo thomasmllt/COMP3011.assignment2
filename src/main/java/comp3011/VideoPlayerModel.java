@@ -81,6 +81,8 @@ public class VideoPlayerModel {
     private FrameProcessingPipeline processingPipeline;
     private Future<?> framePreparationTask;
     private long playbackGeneration;
+    private int submittedFrameCount;
+    private boolean endOfStream;
     private boolean playbackOpen; // True when playback is happening.
     private boolean pauseRequested;
     private boolean audioOutputEnabled;
@@ -323,6 +325,16 @@ public class VideoPlayerModel {
     }
 
     private PreparedFrame readNextVideoFrame(long generation) throws Exception {
+        if (processingPipeline != null && submittedFrameCount > 0) {
+            FrameProcessingPipeline.ProcessedFrame processedFrame = processingPipeline.take();
+            submittedFrameCount--;
+            return createPreparedFrame(processedFrame);
+        }
+
+        if (endOfStream) {
+            return null;
+        }
+
         while (playbackOpen) {
             if (generation != playbackGeneration) {
                 return null;
@@ -330,6 +342,12 @@ public class VideoPlayerModel {
 
             Frame frame = grabFrame();
             if (frame == null) {
+                endOfStream = true;
+                if (submittedFrameCount > 0) {
+                    FrameProcessingPipeline.ProcessedFrame processedFrame = processingPipeline.take();
+                    submittedFrameCount--;
+                    return createPreparedFrame(processedFrame);
+                }
                 return null;
             }
 
@@ -372,26 +390,37 @@ public class VideoPlayerModel {
             int frameNumber = grabber.getFrameNumber();
             InfoFrame info = new InfoFrame(frameNumber, timestampUs);
             processingPipeline.submit(frame, info);
-            FrameProcessingPipeline.ProcessedFrame processedFrame = processingPipeline.take();
-            if (!processedFrame.succeeded()) {
-                throw processedFrame.error();
+            submittedFrameCount++;
+
+            if (submittedFrameCount >= 2) {
+                FrameProcessingPipeline.ProcessedFrame processedFrame = processingPipeline.take();
+                submittedFrameCount--;
+                return createPreparedFrame(processedFrame);
             }
-
-            Image image = converter.convert(processedFrame.frame());
-            long relativeTimestampUs = Math.max(0, timestampUs - firstTimestampUs);
-            long logicalTimestampUs = logicalPlaybackBaseUs + relativeTimestampUs;
-            long targetTimeNs = playbackStartNs + relativeTimestampUs * 1_000L;
-
-            return new PreparedFrame(
-                    image,
-                    frameNumber,
-                    timestampUs,
-                    logicalTimestampUs,
-                    targetTimeNs,
-                    System.nanoTime());
         }
 
         return null;
+    }
+
+    private PreparedFrame createPreparedFrame(
+            FrameProcessingPipeline.ProcessedFrame processedFrame) throws Exception {
+        if (!processedFrame.succeeded()) {
+            throw processedFrame.error();
+        }
+
+        InfoFrame info = processedFrame.info();
+        Image image = converter.convert(processedFrame.frame());
+        long relativeTimestampUs = Math.max(0, info.timestampUs() - firstTimestampUs);
+        long logicalTimestampUs = logicalPlaybackBaseUs + relativeTimestampUs;
+        long targetTimeNs = playbackStartNs + relativeTimestampUs * 1_000L;
+
+        return new PreparedFrame(
+                image,
+                info.frameNumber(),
+                info.timestampUs(),
+                logicalTimestampUs,
+                targetTimeNs,
+                System.nanoTime());
     }
 
     // This is called on a heart beat by the GUI thread. We want to be co-operative here by (a) not blocking, and (b)
@@ -533,6 +562,8 @@ public class VideoPlayerModel {
         audioAvailable = false;
         frameProcessorsInitialised = false;
         framePreparationInProgress = false;
+        submittedFrameCount = 0;
+        endOfStream = false;
 
         if (processingPipeline != null) {
             processingPipeline.close();
