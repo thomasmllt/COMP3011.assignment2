@@ -13,6 +13,7 @@ package comp3011;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Created in the VideoPlayerApp's main function to receive and parse the video player's command-line arguments.
@@ -74,8 +75,17 @@ public class CommandLineController {
     }
 
     public List<FrameProcessor> createFrameProcessors() {
+        return createFrameProcessors(frameProcessorOptions);
+    }
+
+    public Supplier<List<FrameProcessor>> createFrameProcessorFactory() {
+        List<String> options = List.copyOf(frameProcessorOptions);
+        return () -> createFrameProcessors(options);
+    }
+
+    private List<FrameProcessor> createFrameProcessors(List<String> options) {
         List<FrameProcessor> processors = new ArrayList<>();
-        for (String option : frameProcessorOptions) {
+        for (String option : options) {
             processors.add(createFrameProcessor(option));
         }
         return processors;

@@ -12,7 +12,6 @@ package comp3011;
 
 import java.io.File;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ExecutorService;
@@ -20,6 +19,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import org.bytedeco.javacv.FFmpegFrameGrabber;
 import org.bytedeco.javacv.Frame;
@@ -34,19 +34,19 @@ import javafx.scene.image.Image;
  * The model part of the video player model-view-controller architecture.
  *
  * <p>
- * Owns the FFmpeg decoder, playback clock, seeking logic, audio scheduling,
- * and frame processing - which it all manages through cooperative multi-tasking
- * on a single thread. It publishes decoded frames and playback state through
- * callbacks supplied by its owning {@link VideoPlayerController}, keeping it
- * decoupled from the JavaFX view.
+ * Owns the FFmpeg decoder, playback clock, seeking logic, and audio scheduling.
+ * Frame effects are processed by a bounded worker pool, while this model
+ * publishes prepared frames and playback state through callbacks supplied by
+ * its owning {@link VideoPlayerController}.
  * </p>
  */
 public class VideoPlayerModel {
     private static final long NO_SEEK_REQUEST = -1; // Sentinel value used when no seek position is active.
     private static final long FIVE_SECONDS_US = 5_000_000L;
     private static final long AUDIO_LEAD_NS = 30_000_000L;
+    private static final int FRAME_QUEUE_CAPACITY = 8;
 
-    private final List<FrameProcessor> frameProcessors;
+    private final Supplier<List<FrameProcessor>> frameProcessorFactory;
     private final Queue<PendingAudio> pendingAudio = new ArrayDeque<>();
     private final BiConsumer<Integer, Integer> videoSizeChangedHandler;
     private final Consumer<Image> frameReadyHandler;
@@ -103,7 +103,7 @@ public class VideoPlayerModel {
 
     public VideoPlayerModel(
             boolean audioEnabled,
-            List<FrameProcessor> frameProcessors,
+            Supplier<List<FrameProcessor>> frameProcessorFactory,
             BiConsumer<Integer, Integer> videoSizeChangedHandler,
             Consumer<Image> frameReadyHandler,
             Consumer<String> statusChangedHandler,
@@ -115,7 +115,7 @@ public class VideoPlayerModel {
         this.statusChangedHandler = statusChangedHandler;
         this.playbackStateChangedHandler = playbackStateChangedHandler;
         this.audioOutputStateChangedHandler = audioOutputStateChangedHandler;
-        this.frameProcessors = new ArrayList<>(frameProcessors);
+        this.frameProcessorFactory = frameProcessorFactory;
     }
 
     public void play(File file) {
@@ -328,14 +328,19 @@ public class VideoPlayerModel {
     }
 
     private PreparedFrame readNextVideoFrame(long generation) throws Exception {
-        if (processingPipeline != null && submittedFrameCount > 0) {
+        if (processingPipeline != null && submittedFrameCount >= FRAME_QUEUE_CAPACITY) {
             FrameProcessingPipeline.ProcessedFrame processedFrame = processingPipeline.take();
             submittedFrameCount--;
             return createPreparedFrame(processedFrame);
         }
 
         if (endOfStream) {
-            return null;
+            if (submittedFrameCount == 0) {
+                return null;
+            }
+            FrameProcessingPipeline.ProcessedFrame processedFrame = processingPipeline.take();
+            submittedFrameCount--;
+            return createPreparedFrame(processedFrame);
         }
 
         while (playbackOpen) {
@@ -346,12 +351,7 @@ public class VideoPlayerModel {
             Frame frame = grabFrame();
             if (frame == null) {
                 endOfStream = true;
-                if (submittedFrameCount > 0) {
-                    FrameProcessingPipeline.ProcessedFrame processedFrame = processingPipeline.take();
-                    submittedFrameCount--;
-                    return createPreparedFrame(processedFrame);
-                }
-                return null;
+                return readNextVideoFrame(generation);
             }
 
             long timestampUs;
@@ -370,7 +370,7 @@ public class VideoPlayerModel {
 
             if (!frameProcessorsInitialised) {
                 processingPipeline = new FrameProcessingPipeline(
-                        frameProcessors,
+                        frameProcessorFactory,
                         new InfoVideo(
                         mediaName(videoFile),
                         totalVideoFrames,
@@ -383,7 +383,8 @@ public class VideoPlayerModel {
                         intFrameRate,
                         videoFrameDurationUs,
                         pixelFormat()),
-                        2);
+                        8,
+                        Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
                 frameProcessorsInitialised = true;
             }
 
@@ -401,7 +402,7 @@ public class VideoPlayerModel {
             processingPipeline.submit(frame.clone(), info);
             submittedFrameCount++;
 
-            if (submittedFrameCount >= 2) {
+            if (submittedFrameCount >= FRAME_QUEUE_CAPACITY) {
                 FrameProcessingPipeline.ProcessedFrame processedFrame = processingPipeline.take();
                 submittedFrameCount--;
                 return createPreparedFrame(processedFrame);
