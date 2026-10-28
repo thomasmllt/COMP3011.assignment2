@@ -38,6 +38,37 @@ public class FrameProcessingPipelineTest {
         }
     }
 
+    @Test
+    public void keepsFramesInSubmissionOrder() throws Exception {
+        try (FrameProcessingPipeline pipeline = new FrameProcessingPipeline(
+                List.of(recordingProcessor(new ArrayList<>())), testVideoInfo(), 2)) {
+            pipeline.submit(new Frame(), new InfoFrame(1, 10));
+            pipeline.submit(new Frame(), new InfoFrame(2, 20));
+
+            assertEquals(1, pipeline.take().info().frameNumber());
+            assertEquals(2, pipeline.take().info().frameNumber());
+        }
+    }
+
+    @Test
+    public void reportsProcessorErrors() throws Exception {
+        FrameProcessor failingProcessor = new FrameProcessor() {
+            @Override
+            public void process(Frame frame, InfoFrame info) throws Exception {
+                throw new Exception("processor failed");
+            }
+        };
+
+        try (FrameProcessingPipeline pipeline = new FrameProcessingPipeline(
+                List.of(failingProcessor), testVideoInfo(), 1)) {
+            pipeline.submit(new Frame(), new InfoFrame(1, 10));
+            FrameProcessingPipeline.ProcessedFrame result = pipeline.take();
+
+            assertTrue(!result.succeeded());
+            assertEquals("processor failed", result.error().getMessage());
+        }
+    }
+
     private FrameProcessor recordingProcessor(List<Integer> frameNumbers) {
         return new FrameProcessor() {
             @Override

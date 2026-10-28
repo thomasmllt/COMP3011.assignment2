@@ -53,6 +53,7 @@ public class VideoPlayerModel {
     private final Consumer<String> statusChangedHandler;
     private final BiConsumer<Boolean, Boolean> playbackStateChangedHandler;
     private final Consumer<Boolean> audioOutputStateChangedHandler;
+    private final Object playbackResourceLock = new Object();
     private final ExecutorService preparationExecutor = Executors.newSingleThreadExecutor(
             runnable -> Thread.ofPlatform().name("frame-preparation").unstarted(runnable));
 
@@ -207,7 +208,9 @@ public class VideoPlayerModel {
         }
 
         try {
-            grabber.setTimestamp(grabTimestampUs);
+            synchronized (playbackResourceLock) {
+                grabber.setTimestamp(grabTimestampUs);
+            }
             resetPlaybackClock(logicalTimestampUs);
             flushAudioOutput();
             prepareNextFrame();
@@ -351,7 +354,12 @@ public class VideoPlayerModel {
                 return null;
             }
 
-            long timestampUs = grabber.getTimestamp();
+            long timestampUs;
+            int frameNumber;
+            synchronized (playbackResourceLock) {
+                timestampUs = grabber.getTimestamp();
+                frameNumber = grabber.getFrameNumber();
+            }
             if (audioAvailable && frame.samples != null) {
                 queueAudio(timestampUs, frame);
             }
@@ -374,7 +382,7 @@ public class VideoPlayerModel {
                         frameRate,
                         intFrameRate,
                         videoFrameDurationUs,
-                        grabber.getPixelFormat()),
+                        pixelFormat()),
                         2);
                 frameProcessorsInitialised = true;
             }
@@ -576,17 +584,19 @@ public class VideoPlayerModel {
         }
 
         if (grabber != null) {
-            try {
-                grabber.stop();
-            } catch (Exception e) {
-                // The resource is being closed; there is no useful recovery action.
+            synchronized (playbackResourceLock) {
+                try {
+                    grabber.stop();
+                } catch (Exception e) {
+                    // The resource is being closed; there is no useful recovery action.
+                }
+                try {
+                    grabber.close();
+                } catch (Exception e) {
+                    // The resource is being closed; there is no useful recovery action.
+                }
+                grabber = null;
             }
-            try {
-                grabber.close();
-            } catch (Exception e) {
-                // The resource is being closed; there is no useful recovery action.
-            }
-            grabber = null;
         }
 
         if (converter != null) {
@@ -628,10 +638,18 @@ public class VideoPlayerModel {
     }
 
     private Frame grabFrame() throws Exception {
-        if (audioAvailable) {
-            return grabber.grab();
+        synchronized (playbackResourceLock) {
+            if (audioAvailable) {
+                return grabber.grab();
+            }
+            return grabber.grabImage();
         }
-        return grabber.grabImage();
+    }
+
+    private int pixelFormat() {
+        synchronized (playbackResourceLock) {
+            return grabber.getPixelFormat();
+        }
     }
 
     private void flushAudioOutput() {
