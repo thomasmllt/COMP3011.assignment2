@@ -31,8 +31,14 @@ import org.bytedeco.javacv.Frame;
  */
 public abstract class FrameProcessor {
     protected InfoVideo videoInfo;
+    protected final int instanceIndex;
 
     public FrameProcessor() {
+        this(0);
+    }
+
+    protected FrameProcessor(int instanceIndex) {
+        this.instanceIndex = instanceIndex;
     }
 
     public void initialise(InfoVideo videoInfo) throws Exception {

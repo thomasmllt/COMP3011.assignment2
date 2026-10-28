@@ -85,8 +85,11 @@ public class CommandLineController {
 
     private List<FrameProcessor> createFrameProcessors(List<String> options) {
         List<FrameProcessor> processors = new ArrayList<>();
+        java.util.Map<String, Integer> instanceCounts = new java.util.HashMap<>();
         for (String option : options) {
-            processors.add(createFrameProcessor(option));
+            int instanceIndex = instanceCounts.getOrDefault(option, 0);
+            processors.add(createFrameProcessor(option, instanceIndex));
+            instanceCounts.put(option, instanceIndex + 1);
         }
         return processors;
     }
@@ -181,19 +184,19 @@ public class CommandLineController {
         }
     }
 
-    private FrameProcessor createFrameProcessor(String option) {
+    private FrameProcessor createFrameProcessor(String option, int instanceIndex) {
         return switch (option) {
             case "n" -> new FrameNumberer();
-            case "s" -> new FrameScratcher();
-            case "f" -> new FrameFlickerer();
+            case "s" -> new FrameScratcher(instanceIndex);
+            case "f" -> new FrameFlickerer(instanceIndex);
             case "w" -> new FrameBlackAndWhiter();
             case "y" -> new FrameYellower();
             case "v" -> new FrameVignetter();
-            case "d" -> new FrameDuster();
-            case "j" -> new FrameJitterer();
-            case "m" -> new FrameMottler();
+            case "d" -> new FrameDuster(instanceIndex);
+            case "j" -> new FrameJitterer(instanceIndex);
+            case "m" -> new FrameMottler(instanceIndex);
             case "b" -> new FrameBleeder();
-            case "p" -> new FramePepperer();
+            case "p" -> new FramePepperer(instanceIndex);
             default -> throw new IllegalArgumentException("Unknown frame processor: " + option);
         };
     }

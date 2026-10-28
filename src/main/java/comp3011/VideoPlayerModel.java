@@ -45,6 +45,7 @@ public class VideoPlayerModel {
     private static final long FIVE_SECONDS_US = 5_000_000L;
     private static final long AUDIO_LEAD_NS = 30_000_000L;
     private static final int FRAME_QUEUE_CAPACITY = 8;
+    private static final int RESERVED_SYSTEM_CORES = 3;
 
     private final Supplier<List<FrameProcessor>> frameProcessorFactory;
     private final Queue<PendingAudio> pendingAudio = new ArrayDeque<>();
@@ -384,7 +385,7 @@ public class VideoPlayerModel {
                         videoFrameDurationUs,
                         pixelFormat()),
                         8,
-                        Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
+                        Math.max(1, Runtime.getRuntime().availableProcessors() - RESERVED_SYSTEM_CORES));
                 frameProcessorsInitialised = true;
             }
 
