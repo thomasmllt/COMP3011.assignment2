@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
@@ -78,6 +79,8 @@ public class VideoPlayerModel {
     private boolean prepareNextFrameQueued; // True only when the event loop needs to call our prepareNextFrame method.
     private boolean framePreparationInProgress;
     private FrameProcessingPipeline processingPipeline;
+    private Future<?> framePreparationTask;
+    private long playbackGeneration;
     private boolean playbackOpen; // True when playback is happening.
     private boolean pauseRequested;
     private boolean audioOutputEnabled;
@@ -290,12 +293,13 @@ public class VideoPlayerModel {
             return;
         }
 
+        long generation = playbackGeneration;
         framePreparationInProgress = true;
-        preparationExecutor.submit(() -> {
+        framePreparationTask = preparationExecutor.submit(() -> {
             PreparedFrame nextFrame = null;
             Exception error = null;
             try {
-                nextFrame = readNextVideoFrame();
+                nextFrame = readNextVideoFrame(generation);
             } catch (Exception exception) {
                 error = exception;
             }
@@ -304,7 +308,7 @@ public class VideoPlayerModel {
             Exception preparationError = error;
             Platform.runLater(() -> {
                 framePreparationInProgress = false;
-                if (!playbackOpen) {
+                if (!playbackOpen || generation != playbackGeneration) {
                     return;
                 }
                 if (preparationError != null) {
@@ -318,11 +322,14 @@ public class VideoPlayerModel {
         });
     }
 
-    private PreparedFrame readNextVideoFrame() throws Exception {
+    private PreparedFrame readNextVideoFrame(long generation) throws Exception {
         while (playbackOpen) {
+            if (generation != playbackGeneration) {
+                return null;
+            }
+
             Frame frame = grabFrame();
             if (frame == null) {
-                finishPlayback();
                 return null;
             }
 
@@ -512,6 +519,11 @@ public class VideoPlayerModel {
 
     private void closePlaybackResources() {
         playbackTimer.stop();
+        playbackGeneration++;
+        if (framePreparationTask != null) {
+            framePreparationTask.cancel(true);
+            framePreparationTask = null;
+        }
         playbackOpen = false;
         preparedFrame = null;
         pendingAudio.clear();
